@@ -320,7 +320,7 @@ class ElectronicControlUnit:
         """
         self._job_thread_wakeup_queue.put(1)
 
-    def _notify_subscribers(self, priority, pgn, sa, dest, timestamp, data):
+    def _notify_subscribers(self, *args):
         """Feed incoming message to subscribers.
 
         :param int priority:
@@ -336,12 +336,19 @@ class ElectronicControlUnit:
         :param bytearray data:
             Data of the PDU
         """
-        logger.debug("notify subscribers for PGN {}".format(pgn))
-        # notify only the CA for which the message is intended
-        # each CA receives all broadcast messages
-        for dic in self._subscribers:
-            if (dic['dev_adr'] == None) or (dest == ParameterGroupNumber.Address.GLOBAL) or (callable(dic['dev_adr']) and dic['dev_adr'](dest)) or (dest == dic['dev_adr']):
-                dic['cb'](priority, pgn, sa, timestamp, data)
+        if len(args) == 3: # CANOpen frame
+            for dic in self._subscribers:
+                dic['cb'](args[0], args[1], args[2])
+
+        else: # j1939 frame
+            logger.debug("notify subscribers for PGN {}".format(args[1]))
+            # notify only the CA for which the message is intended
+            # each CA receives all broadcast messages
+            for dic in self._subscribers:
+                if (dic['dev_adr'] == None) or (args[3] == ParameterGroupNumber.Address.GLOBAL) or (
+                        callable(dic['dev_adr']) and dic['dev_adr'](args[3])) or (args[3] == dic['dev_adr']):
+                    dic['cb'](args[0], args[1], args[2], args[4], args[5])
+
 
     def _is_message_acceptable(self, dest):
         for dic in self._subscribers:
@@ -360,9 +367,11 @@ class MessageListener(Listener):
         self.ecu = ecu
 
     def on_message_received(self, msg : can.Message):
-        if msg.is_error_frame or msg.is_remote_frame or (msg.is_extended_id == False):
+        if msg.is_error_frame or msg.is_remote_frame:
             return
 
+        elif msg.is_extended_id == False: # assuming CANOpen frame
+            self.ecu._notify_subscribers(msg.arbitration_id, msg.timestamp, msg.data)
         try:
             self.ecu.notify(msg.arbitration_id, msg.data, msg.timestamp)
         except Exception as e:
